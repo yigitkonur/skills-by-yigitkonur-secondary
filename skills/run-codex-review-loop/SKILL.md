@@ -3,7 +3,7 @@ name: run-codex-review-loop
 description: Use skill if you are running per-branch codex review fix loops, evaluating multi-bot review feedback, opening a self-review PR, or rescuing a stalled codex review run.
 ---
 
-# run-codex-review
+# run-codex-review-loop
 
 Deprecated compatibility shim for the legacy `/codex:review` install path. This skill no longer ships its own implementation — it routes the request to the canonical skill that owns the user's actual intent. Do not restore the old runner. Do not invent a new one. Pick the route, then load the target skill.
 
