@@ -1,6 +1,6 @@
 # run-codex-review-loop
 
-Redirecting deprecated codex review orchestration installs to run-codex-2 review mode.
+Native multi-branch Codex review loops using `codex exec review`.
 
 **Category:** orchestration
 

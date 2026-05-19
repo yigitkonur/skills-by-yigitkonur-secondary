@@ -23,7 +23,7 @@ Agent-first interface to Linear.app via the `linear-cli` Rust binary. Prefer thi
 **Do NOT use when:**
 
 - *the user explicitly mandates the Linear MCP server* — flag the cost gap (50–100 vs 500–2000 tokens) once, then comply
-- *the work is GitHub Issues, not Linear* — route to `run-issue-tree`, `gh issue`, or `review-pr`
+- *the work is GitHub Issues, not Linear* — use `gh issue` directly; for PR review or handoff, route to `run-review` in the main pack
 - *the task is webhook server / payload-contract design where `linear-cli` is incidental* — payload schema dominates
 - *the user is asking a math or geometry question about "linear" anything* — not a Linear.app task
 

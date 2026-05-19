@@ -1,74 +1,101 @@
 ---
 name: run-codex-review-loop
-description: Use skill if you are running per-branch codex review fix loops, evaluating multi-bot review feedback, opening a self-review PR, or rescuing a stalled codex review run.
+description: Use skill if you are running native codex review across multiple branches, comparing findings, or rescuing a saved branch-review loop.
 ---
 
 # run-codex-review-loop
 
-Deprecated compatibility shim for the legacy `/codex:review` install path. This skill no longer ships its own implementation — it routes the request to the canonical skill that owns the user's actual intent. Do not restore the old runner. Do not invent a new one. Pick the route, then load the target skill.
+Run repeatable Codex review passes across a bounded set of branches without relying on the retired `run-codex-2` dispatcher. This skill owns the thin loop around native `codex exec review`; `run-review` in the main pack owns one-off review routing, PR handoff, and feedback triage.
 
-## When to use this skill
+## Use This When
 
-Trigger on any of these phrasings, branch shapes, or environment cues:
+- The user names two or more branches and asks for Codex review, convergence, or close-out.
+- A prior branch-review loop has saved review outputs and the user asks to resume or rescue it.
+- The user wants a side-by-side comparison of Codex findings across branches.
 
-- *"run codex review on these branches", "converge these branches with codex", "fix-loop this branch list"*
-- *"resume my codex review run", "the codex review crashed mid-run, pick it up", "rescue the review fleet"*
-- *"open the PR / hand this off for review"* paired with intent to use codex review afterward
-- *"the bots reviewed my PR — Copilot + CodeRabbit + Devin — sort it out"*
-- *"go back over the codex review feedback and tell me what to act on"*
-- *"installed run-codex-review but the slash command does nothing"* (legacy install-path users)
-- A branch list (comma-separated, `branches.txt`, or ≥2 git refs) plus the words "review", "ship", "merge", "close out"
-- `codex --version` succeeds AND the user names ≥1 branch and a review keyword
+Do not use this for:
 
-Do NOT use this skill when:
+- A single PR, branch, commit, or uncommitted diff. Use `run-review` Mode D.
+- Opening a PR or writing a self-review body. Use `run-review` Mode B.
+- Triaging human or bot comments already posted on a PR. Use `run-review` Mode C.
+- Generic multi-agent implementation fan-out. This skill is review-only.
 
-- The user wants to review *someone else's* GitHub PR for merge readiness → load `review-pr`
-- The user wants generic non-codex parallel coding fan-out → load `run-codex-2` exec mode directly
-- The work is opening a PR with no codex review involved → load `review-self` directly
-- The repo is dirty across multiple worktrees with no immediate review intent → load `run-repo-cleanup`
+## Preconditions
 
-## Routing table — pick the canonical skill, then exit this shim
+Run these before starting the loop:
 
-Match the user's request against one row, surface the route, hand control to the named skill. The shim's job ends after routing.
+```bash
+codex --version
+git rev-parse --is-inside-work-tree
+git status --short
+```
 
-| User intent | Canonical skill | Entry point |
-|---|---|---|
-| Per-branch codex review fix loop (branch list + review keyword) | `run-codex-2` review mode | `node skills/run-codex-2/skills/run-codex-2/scripts/run-codex-2.mjs review --branches <list>` |
-| Resume / rescue an interrupted codex review run | `run-codex-2` rescue mode | `node skills/run-codex-2/skills/run-codex-2/scripts/run-codex-2.mjs rescue --manifest <path>` |
-| Open a PR for the author's own branch (with self-review body) | `review-self` | Load `skills/review-self/skills/review-self/SKILL.md` |
-| Triage received feedback from one or many reviewers (human, Copilot, CodeRabbit, Devin, Bito) | `review-feedback` | Load `skills/review-feedback/skills/review-feedback/SKILL.md` |
-| Reviewer-side merge-risk review of a PR or diff | `review-pr` | Load `skills/review-pr/skills/review-pr/SKILL.md` |
-| Worktrees + branches dirty after a review fleet | `run-repo-cleanup` | Load `skills/run-repo-cleanup/skills/run-repo-cleanup/SKILL.md` |
+Require `codex-cli 0.130.0` or newer. If the working tree is dirty, stop and either ask for an explicit `--uncommitted` one-off review via `run-review` Mode D or have the user provide clean branch refs. Do not mix local dirty changes into a multi-branch comparison.
 
-## Disambiguation rules (load-bearing)
+For every branch named by the user:
 
-1. **Codex review ≠ PR review.** `run-codex-2` review mode runs `codex exec review --base <base>` per branch and converges via classifier rounds. It does NOT open PRs. PR creation is `review-self`. Reviewer-side merge calls are `review-pr`.
-2. **Branch list signal wins for fix loops.** If the user supplies ≥2 branches AND mentions "review/ship/merge/close out", route to `run-codex-2` review — even if the prompt also mentions PRs. PR handoff is a *separate* downstream step routed to `review-self` after convergence.
-3. **Multi-bot evaluation ≠ codex convergence.** When the user names third-party reviewers (Copilot, CodeRabbit, Devin, Greptile, Bito) or says "the bots reviewed my PR", the work is feedback triage — route to `review-feedback`. This shim does not own bot-wait timing.
-4. **Manifest existence forces rescue.** If `${CLAUDE_PLUGIN_DATA}/state/<slug>-<hash>/run-codex-2/manifest.json` (or the codex-companion fallback under `${TMPDIR:-/tmp}/codex-companion`) exists with non-terminal entries AND the user says "resume / continue / pick up / rescue / prior run", route to `run-codex-2` rescue. Do not overwrite a live manifest.
-5. **No restoration of the old runner.** This shim does NOT spawn codex, does NOT write a manifest, does NOT arm a Monitor. Routing is the entire job. The canonical skill owns runtime.
-6. **Slash-command boundary.** The vendored `/codex:review` lives inside `run-codex-2` under `scripts/codex-cc/` and is not used by review mode. Review mode uses native `codex exec review`. There is no slash command owned by *this* shim.
+```bash
+git rev-parse --verify <branch>
+```
 
-## Trigger-precision cues for the canonical route
+If a branch does not resolve locally, fetch it explicitly or report that it is missing. Do not silently drop it.
 
-When `run-codex-2` is the route (review or rescue mode), confirm these environment signals before handing off so the canonical skill does not bounce the request:
+## Review Loop
 
-- `codex --version` exits 0 (skill assumes 0.130.0+ for `codex exec review` flags)
-- `git rev-parse --is-inside-work-tree` succeeds in cwd
-- Branch list resolves (comma-list, `branches.txt`, or positionals) — at least 2 refs for review mode
-- `codex login status` is a soft probe; bearer-token / managed-companion / proxy auth is allowed even when status reports "Not logged in" (set `USE_CODEX_SKIP_CODEX_AUTH=1` to bypass the bash bootstrap hard-fail)
-- For rescue: a manifest path exists under the resolved state dir and `manifest.mode == "review"` for review-fleet rescue
+1. Create a timestamped output directory:
+   ```bash
+   mkdir -p "/tmp/codex-review-loop/$(date +%Y%m%dT%H%M%SZ)"
+   ```
+2. Record the input manifest as plain text:
+   ```text
+   base: <base-ref>
+   branches:
+   - <branch-a>
+   - <branch-b>
+   ```
+3. For each branch, switch to the branch, verify it is clean, and run:
+   ```bash
+   codex exec review \
+     --base <base-ref> \
+     --json \
+     -o "/tmp/codex-review-loop/<run-id>/<branch-slug>-last.md" \
+     "Review only major correctness, security, data-loss, API-contract, and stability risks. Ignore style."
+   ```
+4. If the user requested a different focus, preserve their wording in the prompt. Do not broaden it.
+5. After every run, verify the `-o` file exists and is non-empty before moving to the next branch.
 
-If any cue fails, surface the gap in one line and stop — do not auto-improvise into `run-codex-2` and let it fail downstream.
+## Resume / Rescue
 
-## Anti-patterns (do not repeat the legacy shim's old mistakes)
+When resuming, locate the latest run directory under `/tmp/codex-review-loop/` or use the user-provided directory. Read its manifest and list which branch output files already exist. Continue only missing branches unless the user explicitly asks to rerun all.
 
-- Never restore the old `run-codex-review` runner. The old third-party bot-wait timing constants are retired; bot waits route to `review-feedback`.
-- Never spawn `codex` from this shim. Routing is the entire job.
-- Never bypass the routing table to "save a step" — wrong-route handoffs lose the user's manifest, branch list, or feedback context.
-- Never collapse "codex converges branches" and "PR is ready for review" into one skill call — they are two routes (`run-codex-2` review → `review-self`).
-- Never invent a `/codex:resc` or similar slash command. Rescue is a CLI subcommand of `run-codex-2`, not a slash command of this shim.
+Never reuse a stale manifest if the branch list in the user's current request differs. Write a new run directory instead.
 
-## Final behavior
+## Synthesis
 
-Pick the row from the routing table, state the chosen route in one line, and load the canonical skill's `SKILL.md`. The shim itself produces no other artifacts — no manifest, no Monitor, no codex spawn, no PR. The canonical skill owns every downstream contract.
+Read every `<branch-slug>-last.md` and produce:
+
+| Branch | Verdict | Major findings | Evidence | Next action |
+|---|---|---|---|---|
+
+Rules:
+
+- Deduplicate the same finding across branches by file path and behavior.
+- Mark findings as `branch-specific` or `shared`.
+- If Codex produced no actionable findings for a branch, say `clean` for that branch.
+- If a Codex run failed, mark that branch `blocked` with the exact failed command and stderr summary.
+
+## Boundaries
+
+- Do not edit code. This is a review loop, not a fix loop.
+- Do not create PRs, push, or post comments unless the user explicitly asks for that separate action.
+- Do not invent a replacement dispatcher script. Native `codex exec review` is the execution surface.
+- Do not reference retired skills or deleted paths.
+
+## Final Output
+
+Return the run directory, branch matrix, deduplicated findings, failed branches if any, and the exact verification rung reached:
+
+- Rung 1: branch refs verified
+- Rung 2: `codex exec review` completed for every branch
+- Rung 3: output files checked non-empty
+- Rung 4: findings synthesized and deduplicated
