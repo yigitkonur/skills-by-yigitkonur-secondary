@@ -54,6 +54,7 @@ honestly don't. it's a lot. cherry-pick.
 | [convert-mcp-sdk-v1-to-v2](skills/convert-mcp-sdk-v1-to-v2/) | port v1 mcp servers to the v2 split-package sdk |
 | [run-codex-review-loop](skills/run-codex-review-loop/) | per-branch codex review loops using native `codex exec review` |
 | [run-linear-cli](skills/run-linear-cli/) | drive the linear-cli for issue lifecycle, bulk creation, git/pr loops |
+| [run-tailscale-funnel](skills/run-tailscale-funnel/) | expose a local http server at a public .ts.net url via tailscale funnel |
 
 ## why move them out of the main pack
 
