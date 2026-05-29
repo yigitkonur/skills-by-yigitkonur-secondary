@@ -30,8 +30,14 @@ source "$HERE/lib.sh"
 for c in "${OFFLOAD_CONFIG:-}" "$HOME/.config/offload-run/config.sh"; do
   [ -n "$c" ] && [ -f "$c" ] && { source "$c"; break; }
 done
+# Validate the remote workdir at the source (it is interpolated into remote shell strings).
+: "${OFFLOAD_WORKDIR:=/work}"
+[[ "$OFFLOAD_WORKDIR" == /* ]] || die "OFFLOAD_WORKDIR must be an absolute path (got '$OFFLOAD_WORKDIR')"
+[[ "$OFFLOAD_WORKDIR" =~ ^/[A-Za-z0-9_./-]+$ ]] || die "OFFLOAD_WORKDIR has unsafe characters (got '$OFFLOAD_WORKDIR')"
+export OFFLOAD_WORKDIR
 
-usage() { sed -n '2,33p' "$0"; }
+# Print the leading comment block (range-independent: stops at the first non-comment line).
+usage() { awk 'NR==1{next} /^#/{sub(/^# ?/,"");print;next}{exit}' "$0"; }
 
 # ---- run (default): dispatch CMD to the project's backend ------------------------------------
 cmd_run() {

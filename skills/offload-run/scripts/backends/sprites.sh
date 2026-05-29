@@ -74,16 +74,16 @@ sync_worktree() {
   log "syncing worktree"
   # Reset source to exactly match the local tree (so deleted/renamed files don't linger from the
   # golden) WHILE preserving the warm dependency dirs. Then extract the fresh tree on top.
-  sprite exec -s "$SP" -- bash -lc "mkdir -p $OFFLOAD_WORKDIR; find $OFFLOAD_WORKDIR -mindepth 1 -maxdepth 1 ! -name node_modules ! -name .venv ! -name .git -exec rm -rf {} + 2>/dev/null || true"
-  worktree_tar "$ROOT_DIR" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C $OFFLOAD_WORKDIR --warning=no-unknown-keyword"
+  sprite exec -s "$SP" -- bash -lc "mkdir -p '$OFFLOAD_WORKDIR'; find '$OFFLOAD_WORKDIR' -mindepth 1 -maxdepth 1 ! -name node_modules ! -name .venv ! -name .git -exec rm -rf {} + 2>/dev/null || true"
+  worktree_tar "$ROOT_DIR" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C '$OFFLOAD_WORKDIR' --warning=no-unknown-keyword"
   # self-heal: drop any stale AppleDouble files (e.g. baked into an older golden)
-  sprite exec -s "$SP" -- bash -lc "find $OFFLOAD_WORKDIR -name '._*' -type f -delete 2>/dev/null || true"
+  sprite exec -s "$SP" -- bash -lc "find '$OFFLOAD_WORKDIR' -name '._*' -type f -delete 2>/dev/null || true"
 }
 
 # One-time golden: fresh /work, sync source, install deps, checkpoint.
 sprites_bootstrap() {
   local type="$1" golden="$2" root="$3"; ROOT_DIR="$root"
-  sprite exec -s "$SP" -- bash -lc "rm -rf $OFFLOAD_WORKDIR && mkdir -p $OFFLOAD_WORKDIR"
+  sprite exec -s "$SP" -- bash -lc "rm -rf '$OFFLOAD_WORKDIR' && mkdir -p '$OFFLOAD_WORKDIR'"
   sync_worktree
   case "$type" in
     node)   sprite exec -s "$SP" --dir "$OFFLOAD_WORKDIR" -- bash -lc \

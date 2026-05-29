@@ -10,11 +10,11 @@ set -euo pipefail
 # Run/test/prune target the ephemeral project sprite (offload-<type>); serve targets a separate
 # persistent server sprite (offload-srv-<app>) so `offload run`'s golden-restore never wipes a server.
 _resolve() {
-  ROOT="$PWD"; REST=(); local ov="" serve=0
+  ROOT="$PWD"; REST=(); SP_EXPLICIT=0; local ov="" serve=0
   while [ $# -gt 0 ]; do
     case "$1" in
       --root)   ROOT="$2"; shift 2 ;;
-      --sprite) ov="$2"; shift 2 ;;
+      --sprite) ov="$2"; SP_EXPLICIT=1; shift 2 ;;
       --serve)  serve=1; shift ;;
       *) REST+=("$1"); shift ;;
     esac
@@ -29,9 +29,9 @@ ensure_sprite() { sprite list 2>/dev/null | grep -qw "$SP" || { log "creating sp
 wait_ready() { local i; for i in $(seq 1 30); do sprite exec -s "$SP" -- true >/dev/null 2>&1 && return 0; sleep 3; done; die "sprite '$SP' not ready"; }
 sync_tree() {
   log "syncing worktree -> $SP:$OFFLOAD_WORKDIR"
-  sprite exec -s "$SP" -- bash -lc "mkdir -p $OFFLOAD_WORKDIR"
-  worktree_tar "$ROOT" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C $OFFLOAD_WORKDIR --warning=no-unknown-keyword"
-  sprite exec -s "$SP" -- bash -lc "find $OFFLOAD_WORKDIR -name '._*' -type f -delete 2>/dev/null || true"
+  sprite exec -s "$SP" -- bash -lc "mkdir -p '$OFFLOAD_WORKDIR'"
+  worktree_tar "$ROOT" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C '$OFFLOAD_WORKDIR' --warning=no-unknown-keyword"
+  sprite exec -s "$SP" -- bash -lc "find '$OFFLOAD_WORKDIR' -name '._*' -type f -delete 2>/dev/null || true"
 }
 # Read the authoritative public URL from the API (never hand-construct it).
 sprite_url() {
@@ -83,16 +83,17 @@ ops_serve() {
   esac; done
   [ ${#cmd[@]} -gt 0 ] || die "serve: no command. e.g. offload serve --port 8080 --public -- node server.js"
   # Persistent server box, isolated from the ephemeral run sprite (no golden-restore here).
+  # Honor an explicit --sprite override; otherwise default to the per-app server sprite.
   name="${name:-app}"
-  SP="${OFFLOAD_SPRITE_PREFIX:-offload}-srv-$(basename "$ROOT")"
+  [ "${SP_EXPLICIT:-0}" = 1 ] || SP="${OFFLOAD_SPRITE_PREFIX:-offload}-srv-$(basename "$ROOT")"
   ensure_sprite; wait_ready
   sync_tree
   # Install deps ONCE on the persistent box (they survive; no golden churn).
   case "$(detect_project "$ROOT")" in
     node)   log "ensuring node deps on $SP (first serve only)"
-            sprite exec -s "$SP" -- bash -lc "cd $OFFLOAD_WORKDIR && [ -d node_modules ] || (corepack enable 2>/dev/null; pnpm install --frozen-lockfile 2>/dev/null || npm ci || npm install)" ;;
+            sprite exec -s "$SP" -- bash -lc "cd '$OFFLOAD_WORKDIR' && [ -d node_modules ] || (corepack enable 2>/dev/null; pnpm install --frozen-lockfile 2>/dev/null || npm ci || npm install)" ;;
     python) log "ensuring python deps on $SP (first serve only)"
-            sprite exec -s "$SP" -- bash -lc "cd $OFFLOAD_WORKDIR && [ -d .venv ] || (python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt 2>/dev/null || true)" ;;
+            sprite exec -s "$SP" -- bash -lc "cd '$OFFLOAD_WORKDIR' && [ -d .venv ] || (python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt 2>/dev/null || true)" ;;
   esac
   local bin="${cmd[0]}" args
   args="$( IFS=,; printf '%s' "${cmd[*]:1}" )"   # comma-join the args for --args (note: a literal comma in an arg will split — see references)
