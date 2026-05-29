@@ -25,7 +25,7 @@ _resolve() {
   elif [ "$serve" = 1 ]; then SP="${OFFLOAD_SPRITE_PREFIX:-offload}-srv-$(basename "$ROOT")"
   else SP="$(project_sprite "$ROOT" "$type")"; fi
 }
-ensure_sprite() { sprite list 2>/dev/null | grep -qw "$SP" || { log "creating sprite $SP"; sprite create "$SP" --skip-console >/dev/null; }; }
+# ensure_sprite (auth-aware, exact-name) lives in lib.sh and is shared with the run backend.
 wait_ready() { local i; for i in $(seq 1 30); do sprite exec -s "$SP" -- true >/dev/null 2>&1 && return 0; sleep 3; done; die "sprite '$SP' not ready"; }
 sync_tree() {
   log "syncing worktree -> $SP:$OFFLOAD_WORKDIR"
@@ -34,27 +34,23 @@ sync_tree() {
   sprite exec -s "$SP" -- bash -lc "find '$OFFLOAD_WORKDIR' -name '._*' -type f -delete 2>/dev/null || true"
 }
 # Read the authoritative public URL from the API (never hand-construct it).
-sprite_url() {
-  sprite api /v1/sprites 2>/dev/null | python3 -c "import sys,json
-try: d=json.load(sys.stdin)
-except Exception: sys.exit(0)
-print(next((s.get('url','') for s in d.get('sprites',[]) if s.get('name')=='$SP'),''))" 2>/dev/null
-}
+sprite_url() { sprite_info_json "$SP" | jq -r '.url // ""' 2>/dev/null; }
 
 # ---- status: state + URL + cost posture ----------------------------------------------------
 ops_status() {
-  _resolve "$@"
-  sprite api /v1/sprites 2>/dev/null | python3 -c "import sys,json
-d=json.load(sys.stdin); s=next((x for x in d.get('sprites',[]) if x.get('name')=='$SP'),None)
-if not s: print('sprite $SP: not created yet (no charges).'); sys.exit(0)
-st=s.get('status','?'); print('sprite : '+s['name']); print('status : '+st)
-print('url    : '+s.get('url','-')+'   (auth: '+s.get('url_settings',{}).get('auth','?')+')')
-print('seen   : last_running_at='+str(s.get('last_running_at','-')))
-if st=='running': print('billing: RUNNING — CPU \$0.07/CPU-hr + mem \$0.04375/GB-hr + storage now')
-else:             print('billing: IDLE ('+st+') — compute \$0; only storage ~\$0.027/GB-month. Wakes 0.1-2s on next use.')
-print('zero   : only \`offload nuke\` (sprite destroy) stops storage billing too (deletes the golden).')" \
-  || die "could not read sprite state (is 'sprite' authed? run: offload doctor)"
-  local n; n="$(sprite checkpoint list -s "$SP" 2>/dev/null | awk '$1 ~ /^pre-restore/' | wc -l | tr -d ' ' || true)"
+  _resolve "$@"; need_jq
+  local info; info="$(sprite_info_json "$SP")"
+  if [ -z "$info" ]; then echo "sprite $SP: not created yet (no charges)."; return 0; fi
+  local st url auth seen
+  st="$(printf '%s' "$info"   | jq -r '.status // "?"')"
+  url="$(printf '%s' "$info"  | jq -r '.url // "-"')"
+  auth="$(printf '%s' "$info" | jq -r '.url_settings.auth // "?"')"
+  seen="$(printf '%s' "$info" | jq -r '.last_running_at // "-"')"
+  printf 'sprite : %s\nstatus : %s\nurl    : %s   (auth: %s)\nseen   : last_running_at=%s\n' "$SP" "$st" "$url" "$auth" "$seen"
+  if [ "$st" = running ]; then echo 'billing: RUNNING — CPU $0.07/CPU-hr + mem $0.04375/GB-hr + storage now'
+  else echo "billing: IDLE ($st) — compute \$0; only storage ~\$0.027/GB-month. Wakes 0.1-2s on next use."; fi
+  echo 'zero   : only `offload nuke` (sprite destroy) stops storage billing too (deletes the golden).'
+  local n; n="$(sprite_checkpoints_json "$SP" | jq -r '[.[] | select(.id|startswith("pre-restore"))] | length' 2>/dev/null || echo 0)"
   [ "${n:-0}" -gt 3 ] && log "note: $n pre-restore safety checkpoints are accumulating — run 'offload prune' to reclaim storage"
   return 0
 }
@@ -95,8 +91,13 @@ ops_serve() {
     python) log "ensuring python deps on $SP (first serve only)"
             sprite exec -s "$SP" -- bash -lc "cd '$OFFLOAD_WORKDIR' && [ -d .venv ] || (python3 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt 2>/dev/null || true)" ;;
   esac
-  local bin="${cmd[0]}" args
-  args="$( IFS=,; printf '%s' "${cmd[*]:1}" )"   # comma-join the args for --args (note: a literal comma in an arg will split — see references)
+  local bin="${cmd[0]}" args i
+  # sprite-env --args is COMMA-delimited (official: --cmd python3 --args "-m,http.server,8080").
+  # A literal comma in an argument would split silently — fail loud instead of corrupting the cmd.
+  for ((i=1; i<${#cmd[@]}; i++)); do
+    case "${cmd[i]}" in *,*) die "serve: argument '${cmd[i]}' contains a comma; sprite-env --args is comma-delimited and would split it. Wrap the command in a shell script and serve that instead.";; esac
+  done
+  args="$( IFS=,; printf '%s' "${cmd[*]:1}" )"   # comma-join for --args (commas in args already rejected above)
   log "service '$name' on port $port -> ${cmd[*]}"
   sprite exec -s "$SP" -- /.sprite/bin/sprite-env services delete "$name" >/dev/null 2>&1 || true
   if [ -n "$args" ]; then
@@ -111,10 +112,7 @@ ops_serve() {
   # Report the ACTUAL auth from the API (not the requested flag).
   local url auth
   url="$(sprite_url)"
-  auth="$(sprite api /v1/sprites 2>/dev/null | python3 -c "import sys,json
-try: d=json.load(sys.stdin)
-except Exception: print('?'); sys.exit(0)
-print(next((s.get('url_settings',{}).get('auth','?') for s in d.get('sprites',[]) if s.get('name')=='$SP'),'?'))" 2>/dev/null)"
+  auth="$(sprite_info_json "$SP" | jq -r '.url_settings.auth // "?"' 2>/dev/null)"
   printf '\n\033[1m✓ serving on %s\033[0m\n  url : %s\n  auth: %s%s\n  stop: sprite exec -s %s -- /.sprite/bin/sprite-env services stop %s\n' \
     "$SP" "${url:-<offload status --serve>}" "${auth:-?}" \
     "$([ "${auth:-}" = public ] && echo '   ⚠ PUBLIC & sticky — revoke: offload url --serve --private' || echo ' (org-only; first request wakes it ~0.1-2s, idle=$0)')" \
@@ -129,26 +127,28 @@ ops_proxy() { _resolve "$@"; [ ${#REST[@]} -gt 0 ] || die "proxy: give a port, e
 # ---- checkpoints / prune -------------------------------------------------------------------
 ops_checkpoints() { _resolve "$@"; sprite checkpoint list -s "$SP"; }
 ops_prune() {
-  _resolve "$@"
+  _resolve "$@"; need_jq
   local keep=1
   set -- ${REST[@]+"${REST[@]}"}
   while [ $# -gt 0 ]; do case "$1" in --keep) keep="${2:-}"; shift 2;; *) die "prune: unknown flag '$1'";; esac; done
   [[ "$keep" =~ ^[0-9]+$ ]] || die "prune: --keep needs a non-negative integer (got '$keep')"
-  # Delete the platform's accumulating pre-restore safety snapshots (id 'pre-restore-v2-<unixtime>',
-  # in column 1), keeping the newest $keep. sort -V keeps chronological order even if the suffix is unpadded.
-  local ids; ids="$(sprite checkpoint list -s "$SP" 2>/dev/null | awk '$1 ~ /^pre-restore/ {print $1}' | sort -V)"
+  # Identify the platform's accumulating pre-restore safety checkpoints from the TYPED API
+  # (id prefix 'pre-restore'), oldest-first by create_time — robust vs CLI table columns/sort.
+  local ids; ids="$(sprite_checkpoints_json "$SP" | jq -r '[.[] | select(.id|startswith("pre-restore"))] | sort_by(.create_time) | .[].id' 2>/dev/null)"
   [ -n "$ids" ] || { log "no pre-restore checkpoints to prune."; return 0; }
-  local total kill_n
-  total="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
+  local total kill_n; total="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
   kill_n=$(( total - keep )); [ "$kill_n" -lt 0 ] && kill_n=0
   log "pre-restore checkpoints: $total; keeping newest $keep, deleting $kill_n"
+  local id err rc=0
   if [ "$kill_n" -gt 0 ]; then
-    printf '%s\n' "$ids" | head -n "$kill_n" | while read -r id; do
+    # process-substitution (not a pipe) so the loop runs in THIS shell and rc survives
+    while read -r id; do
       [ -n "$id" ] || continue
-      sprite checkpoint delete -s "$SP" "$id" >/dev/null 2>&1 && log "  deleted $id" || log "  skip $id"
-    done
+      if err="$(sprite checkpoint delete -s "$SP" "$id" 2>&1)"; then log "  deleted $id"
+      else rc=1; log "  FAILED $id: $(printf '%s' "$err" | head -1)"; fi
+    done < <(printf '%s\n' "$ids" | head -n "$kill_n")
   fi
-  log "prune done (golden + Current kept)."
+  [ "$rc" = 0 ] && log "prune done (golden + Current kept)." || die "prune: some deletions failed (see above) — golden + Current kept"
 }
 
 # ---- keepalive: hold the sprite awake for N seconds (bounded; auto-releases) ----------------
@@ -195,6 +195,7 @@ ops_doctor() {
   _resolve "$@" 2>/dev/null || true
   printf '== offload doctor ==\n'
   have sprite && printf 'sprite : %s\n' "$(sprite --version 2>/dev/null)" || { printf 'sprite : MISSING — curl -fsSL https://sprites.dev/install.sh | bash\n'; return 1; }
+  have jq && printf 'jq     : %s\n' "$(jq --version 2>/dev/null)" || printf 'jq     : MISSING — needed for JSON parsing: brew install jq\n'
   if sprite list >/dev/null 2>&1; then printf 'auth   : OK\nsprites: %s\n' "$(sprite list 2>/dev/null | tr '\n' ' ')"; else printf 'auth   : NOT LOGGED IN — run: sprite login (or auth setup --token ...)\n'; return 1; fi
   printf 'config : %s\n' "$([ -f "$HOME/.config/offload-run/config.sh" ] && echo "$HOME/.config/offload-run/config.sh" || echo '(defaults: linux=sprites, macos=tart)')"
   if [ -n "${SP:-}" ] && sprite list 2>/dev/null | grep -qw "$SP"; then
