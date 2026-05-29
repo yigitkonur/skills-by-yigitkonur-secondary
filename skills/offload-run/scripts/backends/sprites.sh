@@ -9,8 +9,8 @@
 #   sprite create NAME --skip-console | sprite list
 #   sprite exec -s NAME [--dir D] -- CMD            (stdin piping + exit codes verified)
 #   sprite checkpoint create -s NAME --comment TXT  (returns id like v1)
-#   sprite checkpoint list -s NAME                  (ID CREATED COMMENT)
-#   sprite restore ID   (async restart; gate readiness after)
+#   sprite api /v1/sprites/NAME/checkpoints         (typed JSON id/comment/is_auto — golden resolve via lib)
+#   sprite restore -s NAME ID   (async restart; gate readiness after)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; source "$HERE/lib.sh"
 
@@ -29,11 +29,6 @@ sprite_wait() {
   die "sprite '$SP' not ready after ~90s"
 }
 
-# Resolve the checkpoint ID whose comment matches the golden name (empty if none).
-golden_checkpoint_id() {
-  sprite checkpoint list -s "$SP" 2>/dev/null | awk -v c="$1" 'index($0,c){print $1; exit}'
-}
-
 sprites_backend() {
   local type="$1" hash="$2" root="$3"; shift 3
   # Shell-quote the argv so the remote bash re-parses it to the exact same args, while still
@@ -45,15 +40,12 @@ sprites_backend() {
 
   have sprite || die "sprite CLI not found — curl -fsSL https://sprites.dev/install.sh | bash"
 
-  # 1. Ensure the project sprite exists.
-  if ! sprite list 2>/dev/null | grep -qw "$SP"; then
-    log "creating sprite $SP"
-    sprite create "$SP" --skip-console >/dev/null
-  fi
+  # 1. Ensure the project sprite exists (auth-aware, exact-name via API; fails fast if unauthed).
+  ensure_sprite
   sprite_wait
 
   # 2. Restore the golden checkpoint if it exists; else build it once.
-  local cid; cid="$(golden_checkpoint_id "$golden")"
+  local cid; cid="$(golden_checkpoint_id "$SP" "$golden")"
   if [ -n "$cid" ]; then
     log "restoring golden $golden (checkpoint $cid)"
     sprite restore -s "$SP" "$cid" >/dev/null
@@ -72,16 +64,18 @@ sprites_backend() {
 # Extract the current worktree into $OFFLOAD_WORKDIR WITHOUT removing node_modules.
 sync_worktree() {
   log "syncing worktree"
-  sprite exec -s "$SP" -- bash -lc "mkdir -p $OFFLOAD_WORKDIR"
-  worktree_tar "$ROOT_DIR" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C $OFFLOAD_WORKDIR --warning=no-unknown-keyword"
+  # Reset source to exactly match the local tree (so deleted/renamed files don't linger from the
+  # golden) WHILE preserving the warm dependency dirs. Then extract the fresh tree on top.
+  sprite exec -s "$SP" -- bash -lc "mkdir -p '$OFFLOAD_WORKDIR'; find '$OFFLOAD_WORKDIR' -mindepth 1 -maxdepth 1 ! -name node_modules ! -name .venv ! -name .git -exec rm -rf {} + 2>/dev/null || true"
+  worktree_tar "$ROOT_DIR" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C '$OFFLOAD_WORKDIR' --warning=no-unknown-keyword"
   # self-heal: drop any stale AppleDouble files (e.g. baked into an older golden)
-  sprite exec -s "$SP" -- bash -lc "find $OFFLOAD_WORKDIR -name '._*' -type f -delete 2>/dev/null || true"
+  sprite exec -s "$SP" -- bash -lc "find '$OFFLOAD_WORKDIR' -name '._*' -type f -delete 2>/dev/null || true"
 }
 
 # One-time golden: fresh /work, sync source, install deps, checkpoint.
 sprites_bootstrap() {
   local type="$1" golden="$2" root="$3"; ROOT_DIR="$root"
-  sprite exec -s "$SP" -- bash -lc "rm -rf $OFFLOAD_WORKDIR && mkdir -p $OFFLOAD_WORKDIR"
+  sprite exec -s "$SP" -- bash -lc "rm -rf '$OFFLOAD_WORKDIR' && mkdir -p '$OFFLOAD_WORKDIR'"
   sync_worktree
   case "$type" in
     node)   sprite exec -s "$SP" --dir "$OFFLOAD_WORKDIR" -- bash -lc \
