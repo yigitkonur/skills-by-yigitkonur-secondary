@@ -60,7 +60,9 @@ tools and discoverable APIs are the Right Way"). So this skill is CLI-first; add
 agents that cannot run commands: `offload mcp --add` → `claude mcp add --transport http sprites https://sprites.dev/mcp`.
 
 ## First-time setup
-1. `curl -fsSL https://sprites.dev/install.sh | bash` then `sprite login` (or `sprite auth setup --token …`).
+1. **Get a token, then install + auth the CLI in one step.** At https://sprites.dev create an org token (the dashboard hands you a ready one-liner) and run it — it installs the `sprite` CLI **and** authenticates:
+   `curl -fsSL https://sprites.dev/install.sh | SETUP_SPRITE_TOKEN="<your-token>" bash`
+   Already have the CLI? `sprite auth setup --token <your-token>` (or `sprite login` for a browser flow). The token is stored by the CLI under `~/.config` — **this skill never reads a key from env/config; it only shells out to an already-authed `sprite`.** The sprites backend also needs `jq` (`brew install jq`) for JSON parsing. Stuck? `offload doctor` prints exactly what to fix.
 2. `cp config.example.sh ~/.config/offload-run/config.sh` (optional; defaults: linux=sprites, macos=tart).
 3. `ln -s "$PWD/scripts/offload.sh" ~/bin/offload`. Verify: `offload doctor`.
 

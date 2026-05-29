@@ -56,3 +56,32 @@ worktree_tar() {
 
 # Golden image name for a (type, hash) pair.
 golden_name() { printf 'golden-%s-%s' "$1" "$2"; }
+
+# --- Sprites JSON helpers -------------------------------------------------------------------
+# Parse the CLI's typed JSON API instead of scraping human table output (robust to column/format
+# changes). `sprite api` prints a "Calling API"/URL preamble + curl meter to STDERR, so 2>/dev/null
+# leaves clean JSON on stdout.
+need_jq() { have jq || die "jq is required for the sprites backend — install it: brew install jq"; }
+
+# All checkpoints for a sprite as a JSON array [{id,comment,is_auto,create_time}]; empty on error.
+sprite_checkpoints_json() { sprite api "/v1/sprites/$1/checkpoints" 2>/dev/null; }
+
+# One sprite's info object from /v1/sprites ({name,status,url,url_settings.auth,last_running_at,...});
+# empty if the sprite doesn't exist. Exact-name match (no substring/word-boundary surprises).
+sprite_info_json() { sprite api /v1/sprites 2>/dev/null | jq -c --arg n "$1" '.sprites[]? | select(.name==$n)' 2>/dev/null; }
+
+# Ensure sprite $SP exists; fail FAST (not after a 90s wait) if the CLI is unauthed/unreachable,
+# and distinguish that from "sprite simply doesn't exist yet". Exact-name existence via the API.
+ensure_sprite() {
+  need_jq
+  local json; json="$(sprite api /v1/sprites 2>/dev/null)"
+  [ -n "$json" ] || die "sprite CLI not authed/reachable — run: offload doctor"
+  printf '%s' "$json" | jq -e --arg n "$SP" '.sprites[]? | select(.name==$n)' >/dev/null 2>&1 \
+    || { log "creating sprite $SP"; sprite create "$SP" --skip-console >/dev/null; }
+}
+
+# Resolve the checkpoint id whose comment EXACTLY equals $2 for sprite $1 (empty if none).
+golden_checkpoint_id() {
+  need_jq
+  sprite_checkpoints_json "$1" | jq -r --arg c "$2" '[.[] | select(.comment==$c)][0].id // empty' 2>/dev/null
+}
