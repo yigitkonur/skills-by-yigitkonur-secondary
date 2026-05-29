@@ -12,7 +12,13 @@
 #   offload.sh --type macos -- swift build          # force routing
 #   offload.sh --root /path/to/proj -- npm run build
 set -euo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Resolve our own directory even when invoked through a symlink (e.g. ~/bin/offload).
+SRC="${BASH_SOURCE[0]}"
+while [ -L "$SRC" ]; do
+  D="$(cd -P "$(dirname "$SRC")" && pwd)"; SRC="$(readlink "$SRC")"
+  [[ "$SRC" != /* ]] && SRC="$D/$SRC"
+done
+HERE="$(cd -P "$(dirname "$SRC")" && pwd)"
 source "$HERE/lib.sh"
 # Load user config if present.
 for c in "${OFFLOAD_CONFIG:-}" "$HOME/.config/offload-run/config.sh"; do

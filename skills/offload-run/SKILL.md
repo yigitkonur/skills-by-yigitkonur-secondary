@@ -67,13 +67,16 @@ Bake Codex + Claude Code into the golden (`OFFLOAD_INSTALL_AGENTS=1`), then run 
 the sandbox (`offload -- codex exec "fix tests"`). The Mac becomes a pure terminal/orchestrator.
 
 ## Status
-The **Sprites backend is verified end-to-end** (sprite CLI v0.0.1-rc43, 2026-05-28): a real project
-bootstrapped a golden checkpoint (`npm ci`), warm-restored it on later runs (~19s, no reinstall),
-synced the worktree, ran `vitest` remotely, and propagated exit codes faithfully (0 on pass, 7 on a
-forced failure, shell operators preserved). The **Tart (macOS) and E2B backends are scaffolds**, not
-yet run end-to-end — follow `references/setup.md` and adjust CLI flags to your installed versions
-before relying on them.
+The **Sprites backend is verified end-to-end** (sprite CLI v0.0.1-rc43, 2026-05-28) through the
+documented `offload` symlink entry point: a real project bootstrapped a golden checkpoint (`npm ci`),
+warm-restored it on later runs (~19s, no reinstall), synced the worktree (incl. **uncommitted** edits),
+ran `vitest` remotely (11/11), and propagated exit codes faithfully (0 pass, 7 on a forced failure,
+shell operators preserved). Proof it ran remotely: the sandbox reported Linux x86_64 / node v22 / 8
+CPUs while the host was Darwin arm64 / node v26 with no local `node_modules`. Bugs found and fixed
+during that run are recorded in `references/troubleshooting.md`. The **Tart (macOS) and E2B backends
+are scaffolds**, not yet run end-to-end — follow `references/setup.md` and adjust CLI flags first.
 
 ## References
 - `references/setup.md` — provision each backend + build golden images/checkpoints (the one-time work).
 - `references/backends.md` — backend comparison, macOS host options, when to use which.
+- `references/troubleshooting.md` — gotchas found while verifying the Sprites backend, and how each is handled.

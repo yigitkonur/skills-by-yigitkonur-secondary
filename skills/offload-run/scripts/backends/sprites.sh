@@ -72,7 +72,9 @@ sprites_backend() {
 # Extract the current worktree into $OFFLOAD_WORKDIR WITHOUT removing node_modules.
 sync_worktree() {
   log "syncing worktree"
-  sprite exec -s "$SP" -- bash -lc "mkdir -p $OFFLOAD_WORKDIR"
+  # Reset source to exactly match the local tree (so deleted/renamed files don't linger from the
+  # golden) WHILE preserving the warm dependency dirs. Then extract the fresh tree on top.
+  sprite exec -s "$SP" -- bash -lc "mkdir -p $OFFLOAD_WORKDIR; find $OFFLOAD_WORKDIR -mindepth 1 -maxdepth 1 ! -name node_modules ! -name .venv ! -name .git -exec rm -rf {} + 2>/dev/null || true"
   worktree_tar "$ROOT_DIR" | sprite exec -s "$SP" -- bash -lc "tar -xzf - -C $OFFLOAD_WORKDIR --warning=no-unknown-keyword"
   # self-heal: drop any stale AppleDouble files (e.g. baked into an older golden)
   sprite exec -s "$SP" -- bash -lc "find $OFFLOAD_WORKDIR -name '._*' -type f -delete 2>/dev/null || true"
